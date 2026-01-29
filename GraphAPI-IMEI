@@ -1,0 +1,18 @@
+Get DEVICE IMEI 
+
+Connect to GraphAPI
+https://developer.microsoft.com/en-us/graph/graph-explorer
+
+Query Device ID - EntraID = 52cdc75a-9c12-46f2-80bb-189590b3b4a1    or 65b94ccd-5595-4674-b0cd-982b5228d528
+https://graph.microsoft.com/beta/deviceManagement/managedDevices?$filter=azureADDeviceId eq '52cdc75a-9c12-46f2-80bb-189590b3b4a1'&$select=deviceName,azureADDeviceId,serialNumber,imei
+https://graph.microsoft.com/beta/deviceManagement/managedDevices?$filter=azureADDeviceId eq '65b94ccd-5595-4674-b0cd-982b5228d528'&$select=deviceName,azureADDeviceId,serialNumber,imei
+
+
+
+
+or for a bunch of devices 
+GET https://graph.microsoft.com/beta/deviceManagement/managedDevices
+?$filter=azureADDeviceId in ('guid1','guid2','guid3')
+&$select=id,deviceName,imei,hardwareInformation
+
+
