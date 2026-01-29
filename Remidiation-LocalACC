@@ -1,0 +1,104 @@
+# Remediation Script: Create/fix local admin "user" for LAPS
+# Exit 0 = success, Exit 1 = failure
+# Run as: powershell.exe -ExecutionPolicy Bypass -File Remediate-LAPSUser.ps1
+
+$targetUser      = "user"
+$passwordLength  = 14
+$ErrorActionPreference = "Stop"
+
+function Generate-RandomPassword {
+    param([int]$length = 14)
+
+    $uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    $lowercase = 'abcdefghijklmnopqrstuvwxyz'
+    $numbers   = '0123456789'
+    $specials  = '!@#$%^&*()_+-=[]{}|;:,.<>?'
+
+    $password  = ''
+    $password += $uppercase[(Get-Random -Minimum 0 -Maximum $uppercase.Length)]
+    $password += $lowercase[(Get-Random -Minimum 0 -Maximum $lowercase.Length)]
+    $password += $numbers[(Get-Random -Minimum 0 -Maximum $numbers.Length)]
+    $password += $specials[(Get-Random -Minimum 0 -Maximum $specials.Length)]
+
+    $allChars = $uppercase + $lowercase + $numbers + $specials
+    for ($i = $password.Length; $i -lt $length; $i++) {
+        $password += $allChars[(Get-Random -Minimum 0 -Maximum $allChars.Length)]
+    }
+
+    # Shuffle and return
+    -join ($password.ToCharArray() | Get-Random -Count $password.Length)
+}
+
+try {
+    Write-Host "[REMEDIATE] Checking user '$targetUser'..."
+
+    $existingUser = Get-LocalUser -Name $targetUser -ErrorAction SilentlyContinue
+
+    if ($existingUser) {
+        Write-Host "[REMEDIATE] User exists. Fixing configuration..."
+
+        # Fix 1: Enable if disabled
+        if (-not $existingUser.Enabled) {
+            Enable-LocalUser -Name $targetUser -ErrorAction Stop
+            Write-Host "[REMEDIATE] ✓ Enabled user '$targetUser'"
+        }
+
+        # Fix 2: PasswordNeverExpires MUST be FALSE
+        if ($existingUser.PasswordNeverExpires -eq $true) {
+            Set-LocalUser -Name $targetUser -PasswordNeverExpires:$false -ErrorAction Stop
+            Write-Host "[REMEDIATE] ✓ Set PasswordNeverExpires = FALSE"
+        }
+
+        # Fix 3: Add to Administrators if missing
+        $adminGroup = Get-LocalGroup -Name "Administrators" -ErrorAction Stop
+        $adminMembers = Get-LocalGroupMember -Group $adminGroup -ErrorAction Stop
+
+        $isAdmin = $false
+        foreach ($member in $adminMembers) {
+            if ($member.Name -like "*\$targetUser" -or $member.Name -eq $targetUser) {
+                $isAdmin = $true
+                break
+            }
+        }
+
+        if (-not $isAdmin) {
+            Add-LocalGroupMember -Group "Administrators" -Member $targetUser -ErrorAction Stop
+            Write-Host "[REMEDIATE] ✓ Added '$targetUser' to Administrators"
+        }
+
+        Write-Host "[REMEDIATE] SUCCESS: User '$targetUser' is configured for LAPS"
+        exit 0
+    }
+    else {
+        Write-Host "[REMEDIATE] Creating user '$targetUser'..."
+
+        $password       = Generate-RandomPassword -length $passwordLength
+        $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+
+        # Create user WITHOUT PasswordNeverExpires set to true
+        New-LocalUser -Name $targetUser `
+                      -Password $securePassword `
+                      -FullName "LAPS Local Admin" `
+                      -Description "LAPS-managed local administrator account" `
+                      -ErrorAction Stop
+
+        # Explicitly set PasswordNeverExpires to FALSE after creation
+        Set-LocalUser -Name $targetUser -PasswordNeverExpires:$false -ErrorAction Stop
+        Write-Host "[REMEDIATE] ✓ Created user and set PasswordNeverExpires = FALSE"
+
+        # Add to Administrators
+        Add-LocalGroupMember -Group "Administrators" -Member $targetUser -ErrorAction Stop
+        Write-Host "[REMEDIATE] ✓ Added to Administrators group"
+
+        # Ensure enabled
+        Enable-LocalUser -Name $targetUser -ErrorAction Stop
+        Write-Host "[REMEDIATE] ✓ User enabled"
+
+        Write-Host "[REMEDIATE] SUCCESS: User '$targetUser' created and ready for LAPS"
+        exit 0
+    }
+}
+catch {
+    Write-Host "[REMEDIATE] ERROR: Failed to create/configure user: $_"
+    exit 1
+}
