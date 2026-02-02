@@ -1,59 +1,50 @@
-# Detection Script: Check if local account "user" exists and is LAPS-ready
-# Exit 0 = compliant, Exit 1 = remediation needed
-# Run as: powershell.exe -ExecutionPolicy Bypass -File Detect-LAPSUser.ps1
+# Save this as C:\Temp\Remediate-LAPSUser.ps1
 
-$targetUser = "user"
-$ErrorActionPreference = "Stop"
+$userName = "user"
 
 try {
-    Write-Host "[DETECT] Checking user '$targetUser'..."
-
-    # 1. Does the local user exist?
-    $existingUser = Get-LocalUser -Name $targetUser -ErrorAction Stop
-    Write-Host "[DETECT] User exists: $($existingUser.Name)"
-
-    # 2. Must be enabled
-    if (-not $existingUser.Enabled) {
-        Write-Host "[DETECT] FAIL: User is disabled"
-        exit 1
+    $user = Get-LocalUser -Name $userName -ErrorAction Stop
+    Write-Host "[REMEDIATE] User '$userName' exists. Checking configuration..."
+    
+    # Fix PasswordNeverExpires
+    if ($user.PasswordNeverExpires -eq $true) {
+        Set-LocalUser -Name $userName -PasswordNeverExpires $false
+        Write-Host "[REMEDIATE] SUCCESS: Set PasswordNeverExpires = FALSE"
+    } else {
+        Write-Host "[REMEDIATE] PasswordNeverExpires already FALSE"
     }
-    Write-Host "[DETECT] PASS: User is enabled"
-
-    # 3. PasswordNeverExpires must be FALSE (required for LAPS)
-    if ($existingUser.PasswordNeverExpires -eq $true) {
-        Write-Host "[DETECT] FAIL: PasswordNeverExpires is TRUE"
-        exit 1
+    
+    # Check admin membership
+    $admins = Get-LocalGroupMember -Group "Administrators" | Where-Object {$_.Name -like "*$userName"}
+    if (-not $admins) {
+        Add-LocalGroupMember -Group "Administrators" -Member $userName
+        Write-Host "[REMEDIATE] SUCCESS: Added to Administrators"
+    } else {
+        Write-Host "[REMEDIATE] Already in Administrators group"
     }
-    Write-Host "[DETECT] PASS: PasswordNeverExpires is FALSE"
-
-    # 4. Must be member of local Administrators
-    # FIX: Use SID comparison instead of name matching
-    $adminGroup = Get-LocalGroup -Name "Administrators" -ErrorAction Stop
-    $adminMembers = Get-LocalGroupMember -Group $adminGroup -ErrorAction Stop
-
-    $isAdmin = $false
-    foreach ($member in $adminMembers) {
-        if ($member.Name -like "*\$targetUser" -or $member.Name -eq $targetUser) {
-            $isAdmin = $true
-            break
-        }
-    }
-
-    if (-not $isAdmin) {
-        Write-Host "[DETECT] FAIL: User is not in Administrators group"
-        exit 1
-    }
-    Write-Host "[DETECT] PASS: User is in Administrators group"
-
-    # All checks passed
-    Write-Host "[DETECT] SUCCESS: User is LAPS-ready"
+    
+    Write-Host "[REMEDIATE] User configuration complete"
     exit 0
-}
-catch [Microsoft.PowerShell.Commands.UserNotFoundException] {
-    Write-Host "[DETECT] FAIL: User '$targetUser' does not exist"
-    exit 1
-}
-catch {
-    Write-Host "[DETECT] ERROR: $_"
+    
+} catch [Microsoft.PowerShell.Commands.UserNotFoundException] {
+    Write-Host "[REMEDIATE] User '$userName' not found. Creating..."
+    
+    # Generate random password
+    $password = -join ((65..90) + (97..122) + (48..57) + 33,64,35,36,37,94,38,42 | Get-Random -Count 16 | ForEach-Object {[char]$_})
+    $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+    
+    # Create user
+    New-LocalUser -Name $userName -Password $securePassword -PasswordNeverExpires $false -Description "LAPS Managed Account"
+    Write-Host "[REMEDIATE] SUCCESS: Created user '$userName'"
+    
+    # Add to Administrators
+    Add-LocalGroupMember -Group "Administrators" -Member $userName
+    Write-Host "[REMEDIATE] SUCCESS: Added to Administrators"
+    
+    Write-Host "[REMEDIATE] User created and configured for LAPS"
+    exit 0
+    
+} catch {
+    Write-Host "[REMEDIATE] ERROR: $_"
     exit 1
 }
